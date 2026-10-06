@@ -15,7 +15,7 @@ local Config = getgenv().ProjectNearConfig or {
     Scripts = {}
 }
 
--- Safe Fallbacks
+-- Safe Fallbacks & Colors
 local SafeFallbackIcon = "rbxassetid://6031097225"
 local SystemIcon = (Config.Icon and Config.Icon ~= "") and Config.Icon or SafeFallbackIcon
 
@@ -39,7 +39,13 @@ local MarketplaceService = game:GetService("MarketplaceService")
 local TweenService = game:GetService("TweenService")
 local LocalPlayer = Players.LocalPlayer
 
--- Format Numbers
+-- Variables
+local pName = LocalPlayer and LocalPlayer.Name or "Player"
+local pId = LocalPlayer and LocalPlayer.UserId or 1
+local GameIcon = "rbxthumb://type=GameIcon&id=" .. game.PlaceId .. "&w=150&h=150"
+local isSupported = Config.Scripts and Config.Scripts[game.PlaceId]
+
+-- Utility: Format Numbers
 local function FormatNumber(num)
     local formatted = tostring(math.floor(tonumber(num) or 0))
     while true do
@@ -50,41 +56,40 @@ local function FormatNumber(num)
     return formatted
 end
 
--- Safely Load Images (Prevents crashes on executors without getcustomasset)
-local function LoadAsset(asset)
-    if not asset or asset == "" then return SafeFallbackIcon end
-    if typeof(asset) == "number" then return "rbxassetid://" .. tostring(asset) end
-    if asset:find("rbxassetid://") or asset:find("rbxthumb://") then return asset end
-    if asset:find("http") then
-        if writefile and getcustomasset and isfile then
-            local cleanName = "PN_Asset_" .. string.gsub(asset, "%W", ""):sub(-15) .. ".png"
-            local success = pcall(function()
-                if not isfile(cleanName) then
-                    local raw = game:HttpGet(asset)
-                    if raw then writefile(cleanName, raw) end
-                end
-            end)
-            if success and isfile(cleanName) then
-                local assetSuccess, customAsset = pcall(function() return getcustomasset(cleanName) end)
-                if assetSuccess and customAsset then return customAsset end
-            end
-        end
+-- Utility: Asynchronous Image Loader (Prevents Freezing)
+local function ApplyImage(uiElement, url, fallback)
+    uiElement.Image = fallback or SafeFallbackIcon
+    if not url or url == "" then return end
+    if url:find("rbxassetid://") or url:find("rbxthumb://") then
+        uiElement.Image = url
+        return
     end
-    return SafeFallbackIcon
+    if url:find("http") then
+        task.spawn(function()
+            if writefile and getcustomasset and isfile then
+                local cleanName = "PN_Asset_" .. string.gsub(url, "%W", ""):sub(-15) .. ".png"
+                pcall(function()
+                    if not isfile(cleanName) then
+                        local raw = game:HttpGet(url)
+                        if raw then writefile(cleanName, raw) end
+                    end
+                    if isfile(cleanName) then
+                        uiElement.Image = getcustomasset(cleanName)
+                    end
+                end)
+            end
+        end)
+    end
 end
 
--- Safe Jnkie Validation
+-- Utility: Jnkie Verification
 local function VerifyJnkieKey(userKey)
     if not Config.Jnkie or not Config.Jnkie.Enabled then return false end
-    local apiKey = Config.Jnkie.ApiKey or ""
-    local serviceId = Config.Jnkie.ServiceId or ""
-    
     local url = string.format("https://jnkie.com/api/v1/verify?key=%s&service=%s&api_key=%s", 
         HttpService:UrlEncode(userKey), 
-        HttpService:UrlEncode(serviceId), 
-        HttpService:UrlEncode(apiKey)
+        HttpService:UrlEncode(Config.Jnkie.ServiceId or ""), 
+        HttpService:UrlEncode(Config.Jnkie.ApiKey or "")
     )
-    
     local success, response = pcall(function() return game:HttpGet(url) end)
     if success and response then
         local ok, data = pcall(function() return HttpService:JSONDecode(response) end)
@@ -95,40 +100,9 @@ local function VerifyJnkieKey(userKey)
     return false
 end
 
--- Discord Info Extraction
-local DiscordData = { Name = "ProjectNear Community", Icon = "", Online = 0, Offline = 0, Total = 0 }
-local inviteCode = ""
-pcall(function()
-    local str = Config.DiscordInvite or ""
-    str = str:split("?")[1]:split("#")[1]
-    inviteCode = str:match("discord%.gg/([%w%-]+)") or str:match("discord%.com/invite/([%w%-]+)") or str:match("^([%w%-]+)$") or ""
-end)
-
-if inviteCode ~= "" then
-    pcall(function()
-        local rawJson = game:HttpGet("https://discord.com/api/v10/invites/" .. inviteCode .. "?with_counts=true")
-        local data = HttpService:JSONDecode(rawJson)
-        if data and data.guild then
-            DiscordData.Name = data.guild.name or DiscordData.Name
-            if data.guild.id and data.guild.icon then
-                DiscordData.Icon = string.format("https://cdn.discordapp.com/icons/%s/%s.png?size=128", data.guild.id, data.guild.icon)
-            end
-            DiscordData.Online = data.approximate_presence_count or 0
-            DiscordData.Total = data.approximate_member_count or 0
-            DiscordData.Offline = math.max(0, DiscordData.Total - DiscordData.Online)
-        end
-    end)
-end
-
--- Game Info
-local GameName = "Unknown Game"
-local GameIcon = "rbxthumb://type=GameIcon&id=" .. game.PlaceId .. "&w=150&h=150"
-pcall(function()
-    local product = MarketplaceService:GetProductInfo(game.PlaceId)
-    if product and product.Name then GameName = product.Name end
-end)
-
--- Safe GUI Parenting
+-- --------------------------------------------------
+-- GUI CREATION (Zero Yielding Architecture)
+-- --------------------------------------------------
 local TargetParent
 pcall(function() TargetParent = gethui and gethui() or game:GetService("CoreGui") end)
 if not TargetParent or not pcall(function() local _ = TargetParent.Name end) then
@@ -139,136 +113,4 @@ if TargetParent:FindFirstChild("ProjectNearKeyUI") then
     TargetParent.ProjectNearKeyUI:Destroy()
 end
 
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "ProjectNearKeyUI"
-ScreenGui.ResetOnSpawn = false
-ScreenGui.DisplayOrder = 999
-ScreenGui.Parent = TargetParent
-
-local function UnloadUI()
-    if ScreenGui then
-        pcall(function()
-            local main = ScreenGui:FindFirstChild("MainFrame") or ScreenGui:FindFirstChild("SplashFrame")
-            if main then
-                TweenService:Create(main, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-                    Size = UDim2.new(0, 0, 0, 0),
-                    BackgroundTransparency = 1
-                }):Play()
-                task.wait(0.3)
-            end
-        end)
-        ScreenGui:Destroy()
-    end
-end
-getgenv().ProjectNear = { Unload = UnloadUI }
-
--- --------------------------------------------------
--- SPLASH SCREEN
--- --------------------------------------------------
-local SplashFrame = Instance.new("Frame")
-SplashFrame.Name = "SplashFrame"
-SplashFrame.Size = UDim2.new(0, 400, 0, 220)
-SplashFrame.Position = UDim2.new(0.5, -200, 0.5, -110)
-SplashFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 12)
-SplashFrame.BorderSizePixel = 0
-SplashFrame.Parent = ScreenGui
-
-local SplashCorner = Instance.new("UICorner")
-SplashCorner.CornerRadius = UDim.new(0, 14)
-SplashCorner.Parent = SplashFrame
-
-local SplashStroke = Instance.new("UIStroke")
-SplashStroke.Color = Color3.fromRGB(32, 32, 38)
-SplashStroke.Thickness = 1
-SplashStroke.Parent = SplashFrame
-
-local SplashIcon = Instance.new("ImageLabel")
-SplashIcon.Size = UDim2.new(0, 60, 0, 60)
-SplashIcon.Position = UDim2.new(0.5, -30, 0.2, -10)
-SplashIcon.BackgroundTransparency = 1
-SplashIcon.Image = LoadAsset(SystemIcon)
-SplashIcon.Parent = SplashFrame
-
-local SplashCornerIcon = Instance.new("UICorner")
-SplashCornerIcon.CornerRadius = UDim.new(0, 12)
-SplashCornerIcon.Parent = SplashIcon
-
-local pName = "Player"
-pcall(function() pName = LocalPlayer.Name end)
-local greetingText = (Config.LoadingGreeting or "Yoo {username} thanks for executing"):gsub("{username}", pName)
-
-local SplashText = Instance.new("TextLabel")
-SplashText.Size = UDim2.new(1, -40, 0, 60)
-SplashText.Position = UDim2.new(0, 20, 0.5, 5)
-SplashText.BackgroundTransparency = 1
-SplashText.Text = greetingText
-SplashText.TextColor3 = Color3.fromRGB(240, 240, 245)
-SplashText.TextSize = 13
-SplashText.Font = Enum.Font.GothamBold
-SplashText.TextWrapped = true
-SplashText.Parent = SplashFrame
-
-local BarBackground = Instance.new("Frame")
-BarBackground.Size = UDim2.new(0.8, 0, 0, 4)
-BarBackground.Position = UDim2.new(0.1, 0, 0.85, 0)
-BarBackground.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
-BarBackground.BorderSizePixel = 0
-BarBackground.Parent = SplashFrame
-local BarCorner = Instance.new("UICorner")
-BarCorner.CornerRadius = UDim.new(1, 0)
-BarCorner.Parent = BarBackground
-
-local BarFill = Instance.new("Frame")
-BarFill.Size = UDim2.new(0, 0, 1, 0)
-BarFill.BackgroundColor3 = PrimaryColor == Color3.fromRGB(255, 255, 255) and Color3.fromRGB(240, 240, 245) or PrimaryColor
-BarFill.BorderSizePixel = 0
-BarFill.Parent = BarBackground
-local BarFillCorner = Instance.new("UICorner")
-BarFillCorner.CornerRadius = UDim.new(1, 0)
-BarFillCorner.Parent = BarFill
-
-TweenService:Create(BarFill, TweenInfo.new(1.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-    Size = UDim2.new(1, 0, 1, 0)
-}):Play()
-
-task.wait(2.0)
-
-TweenService:Create(SplashFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-    BackgroundTransparency = 1,
-    Size = UDim2.new(0, 380, 0, 200),
-    Position = UDim2.new(0.5, -190, 0.5, -100)
-}):Play()
-task.wait(0.3)
-SplashFrame:Destroy()
-
--- --------------------------------------------------
--- MAIN WINDOW
--- --------------------------------------------------
-local MainFrame = Instance.new("Frame")
-MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 600, 0, 350)
-MainFrame.Position = UDim2.new(0.5, -300, 0.5, -175)
-MainFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 12)
-MainFrame.BorderSizePixel = 0
-MainFrame.Active = true
-MainFrame.Draggable = true
-MainFrame.Parent = ScreenGui
-
-local MainCorner = Instance.new("UICorner")
-MainCorner.CornerRadius = UDim.new(0, 12)
-MainCorner.Parent = MainFrame
-
-local MainStroke = Instance.new("UIStroke")
-MainStroke.Color = Color3.fromRGB(32, 32, 38)
-MainStroke.Thickness = 1
-MainStroke.Parent = MainFrame
-
-local CloseBtn = Instance.new("TextButton")
-CloseBtn.Size = UDim2.new(0, 24, 0, 24)
-CloseBtn.Position = UDim2.new(1, -32, 0, 10)
-CloseBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
-CloseBtn.Text = "✕"
-CloseBtn.TextColor3 = Color3.fromRGB(160, 160, 168)
-CloseBtn.Font = Enum.Font.GothamBold
-CloseBtn.TextSize = 12
-CloseBtn.Parent = Main
+local ScreenGui = Instance.new
