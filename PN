@@ -1,38 +1,27 @@
 -- ================================================== --
---             PROJECTNEAR KEY SYSTEM                 --
+--          PROJECTNEAR MAIN CORE ENGINE (PN)         --
 -- ================================================== --
 
-local Config = {
+local Config = getgenv().ProjectNearConfig or {
     Name = "ProjectNear",
     SubTitle = "Key System",
-    
-    -- Color Theme Options: "Black", "Whitey", "White", "Green", "Purple", "Blue", "Red", "Cyan"
-    -- Or direct RGB: Color3.fromRGB(255, 255, 255)
-    Color = "Black", 
-    
-    -- Logo Image: Roblox asset IDs OR web URLs (jnkie.com, imgur, discord cdn, etc.)
-    LogoImage = "rbxassetid://6031097225",
-    
-    -- Key System Configuration
-    RequiredKey = "1234", -- Leave "" to bypass key requirement
+    Color = "Black",
+    Icon = "https://tse2.mm.bing.net/th/id/OIP.D4YsNmN5zO74acHPtHb-SQHaHa?r=0&rs=1&pid=ImgDetMain&o=7&rm=3",
+    LoadingGreeting = "Yoo {username} thanks for executing, YOU DA GOAT OF GOATS",
+    RequiredKey = "1234",
     KeyLink = "https://discord.gg/7tEsxYAny",
-    
-    -- Discord Invite Code / Link
     DiscordInvite = "discord.gg/7tEsxYAny",
-    
-    -- PlaceId -> Script Loader URLs
-    Scripts = {
-        [12345678] = "https://Examplelink.link",
-        -- [PlaceID] = "https://YourScriptLink.com/raw",
-    }
+    Jnkie = { Enabled = false, ApiKey = "", ServiceId = "" },
+    Scripts = {}
 }
 
--- ================================================== --
---                 COLOR THEME ENGINE                 --
--- ================================================== --
+-- Fallback Defaults
+local DefaultIcon = "https://tse2.mm.bing.net/th/id/OIP.D4YsNmN5zO74acHPtHb-SQHaHa?r=0&rs=1&pid=ImgDetMain&o=7&rm=3"
+local SystemIcon = (Config.Icon and Config.Icon ~= "") and Config.Icon or DefaultIcon
 
+-- Color Presets
 local ColorPresets = {
-    ["Black"]  = Color3.fromRGB(255, 255, 255), -- High-contrast pitch white on deep midnight black
+    ["Black"]  = Color3.fromRGB(255, 255, 255),
     ["Whitey"] = Color3.fromRGB(220, 220, 225),
     ["White"]  = Color3.fromRGB(255, 255, 255),
     ["Green"]  = Color3.fromRGB(40, 200, 100),
@@ -42,28 +31,18 @@ local ColorPresets = {
     ["Cyan"]   = Color3.fromRGB(0, 220, 240)
 }
 
-local function GetThemeColor(val)
-    if typeof(val) == "Color3" then return val end
-    if typeof(val) == "string" and ColorPresets[val] then
-        return ColorPresets[val]
-    end
-    return Color3.fromRGB(255, 255, 255)
-end
+local PrimaryColor = typeof(Config.Color) == "Color3" and Config.Color or (ColorPresets[Config.Color] or Color3.fromRGB(255, 255, 255))
 
-local PrimaryColor = GetThemeColor(Config.Color)
-
--- ================================================== --
---                SERVICES & HELPERS                  --
--- ================================================== --
-
+-- Services
 repeat task.wait() until game:IsLoaded()
 
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 local MarketplaceService = game:GetService("MarketplaceService")
+local TweenService = game:GetService("TweenService")
 local LocalPlayer = Players.LocalPlayer
 
--- Format numbers with commas (e.g., 1234 -> "1,234")
+-- Format Numbers (1234 -> 1,234)
 local function FormatNumber(num)
     local formatted = tostring(math.floor(tonumber(num) or 0))
     while true do
@@ -77,12 +56,8 @@ end
 -- Web & Roblox Image Asset Loader
 local function LoadAsset(asset)
     if not asset or asset == "" then return "" end
-    if typeof(asset) == "number" then
-        return "rbxassetid://" .. tostring(asset)
-    end
-    if asset:sub(1, 13) == "rbxassetid://" or asset:sub(1, 11) == "rbxthumb://" then
-        return asset
-    end
+    if typeof(asset) == "number" then return "rbxassetid://" .. tostring(asset) end
+    if asset:sub(1, 13) == "rbxassetid://" or asset:sub(1, 11) == "rbxthumb://" then return asset end
     if asset:sub(1, 4) == "http" and writefile and getcustomasset then
         local cleanName = "PN_Asset_" .. string.gsub(asset, "%W", ""):sub(-30) .. ".png"
         if not isfile(cleanName) then
@@ -98,37 +73,48 @@ local function LoadAsset(asset)
     return asset
 end
 
--- Extract clean Discord Invite Code
+-- Jnkie.com Key Validation Engine
+local function VerifyJnkieKey(userKey)
+    if not Config.Jnkie or not Config.Jnkie.Enabled then return false end
+    local apiKey = Config.Jnkie.ApiKey or ""
+    local serviceId = Config.Jnkie.ServiceId or ""
+    
+    local url = string.format("https://api.jnkie.com/v1/keys/verify?key=%s&service=%s&apiKey=%s", 
+        HttpService:UrlEncode(userKey), 
+        HttpService:UrlEncode(serviceId), 
+        HttpService:UrlEncode(apiKey)
+    )
+    
+    local success, response = pcall(function()
+        return game:HttpGet(url)
+    end)
+    
+    if success and response then
+        local ok, data = pcall(function() return HttpService:JSONDecode(response) end)
+        if ok and data then
+            return data.valid == true or data.success == true or data.status == "valid"
+        end
+    end
+    return false
+end
+
+-- Extract Discord Invite
 local function ExtractInviteCode(str)
     if not str then return "" end
     str = str:split("?")[1]:split("#")[1]
-    local code = str:match("discord%.gg/([%w%-]+)") 
-        or str:match("discord%.com/invite/([%w%-]+)") 
-        or str:match("discordapp%.com/invite/([%w%-]+)")
-        or str:match("^([%w%-]+)$")
-    return code or ""
+    return str:match("discord%.gg/([%w%-]+)") or str:match("discord%.com/invite/([%w%-]+)") or str:match("^([%w%-]+)$") or ""
 end
 
--- Game Info Fetching
+-- Game Info
 local GameName = "Unknown Game"
 local GameIcon = "rbxthumb://type=GameIcon&id=" .. game.PlaceId .. "&w=150&h=150"
-
 pcall(function()
     local product = MarketplaceService:GetProductInfo(game.PlaceId)
-    if product and product.Name then
-        GameName = product.Name
-    end
+    if product and product.Name then GameName = product.Name end
 end)
 
--- Discord Stats Fetching via API
-local DiscordData = {
-    Name = "ProjectNear Community",
-    Icon = "",
-    Online = 0,
-    Offline = 0,
-    Total = 0
-}
-
+-- Discord Info
+local DiscordData = { Name = "ProjectNear Community", Icon = "", Online = 0, Offline = 0, Total = 0 }
 local inviteCode = ExtractInviteCode(Config.DiscordInvite)
 if inviteCode ~= "" then
     pcall(function()
@@ -148,10 +134,7 @@ if inviteCode ~= "" then
     end)
 end
 
--- ================================================== --
---                    UI BUILDER                      --
--- ================================================== --
-
+-- GUI Parenting
 local gethui = gethui or function() return game:GetService("CoreGui") end
 local TargetParent = gethui() or LocalPlayer:WaitForChild("PlayerGui")
 
@@ -165,7 +148,110 @@ ScreenGui.ResetOnSpawn = false
 ScreenGui.DisplayOrder = 999
 ScreenGui.Parent = TargetParent
 
--- Outer Main Frame (Midnight Pitch Black)
+-- Unload System Function
+local function UnloadUI()
+    if ScreenGui then
+        local mainFrame = ScreenGui:FindFirstChild("MainFrame") or ScreenGui:FindFirstChild("SplashFrame")
+        if mainFrame then
+            TweenService:Create(mainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                Size = UDim2.new(0, 0, 0, 0),
+                BackgroundTransparency = 1
+            }):Play()
+            task.wait(0.3)
+        end
+        ScreenGui:Destroy()
+    end
+end
+
+-- Export Unload function globally
+getgenv().ProjectNear = { Unload = UnloadUI }
+
+-- --------------------------------------------------
+-- SPLASH / LOADING ANIMATION SCREEN
+-- --------------------------------------------------
+local SplashFrame = Instance.new("Frame")
+SplashFrame.Name = "SplashFrame"
+SplashFrame.Size = UDim2.new(0, 400, 0, 220)
+SplashFrame.Position = UDim2.new(0.5, -200, 0.5, -110)
+SplashFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 12)
+SplashFrame.BorderSizePixel = 0
+SplashFrame.Parent = ScreenGui
+
+local SplashCorner = Instance.new("UICorner")
+SplashCorner.CornerRadius = UDim.new(0, 14)
+SplashCorner.Parent = SplashFrame
+
+local SplashStroke = Instance.new("UIStroke")
+SplashStroke.Color = Color3.fromRGB(32, 32, 38)
+SplashStroke.Thickness = 1
+SplashStroke.Parent = SplashFrame
+
+local SplashIcon = Instance.new("ImageLabel")
+SplashIcon.Size = UDim2.new(0, 60, 0, 60)
+SplashIcon.Position = UDim2.new(0.5, -30, 0.2, -10)
+SplashIcon.BackgroundTransparency = 1
+SplashIcon.Image = LoadAsset(SystemIcon)
+SplashIcon.Parent = SplashFrame
+
+local SplashCornerIcon = Instance.new("UICorner")
+SplashCornerIcon.CornerRadius = UDim.new(0, 12)
+SplashCornerIcon.Parent = SplashIcon
+
+local greetingText = (Config.LoadingGreeting or "Yoo {username} thanks for executing, YOU DA GOAT OF GOATS"):gsub("{username}", LocalPlayer.Name)
+
+local SplashText = Instance.new("TextLabel")
+SplashText.Size = UDim2.new(1, -40, 0, 60)
+SplashText.Position = UDim2.new(0, 20, 0.5, 5)
+SplashText.BackgroundTransparency = 1
+SplashText.Text = greetingText
+SplashText.TextColor3 = Color3.fromRGB(240, 240, 245)
+SplashText.TextSize = 13
+SplashText.Font = Enum.Font.GothamBold
+SplashText.TextWrapped = true
+SplashText.Parent = SplashFrame
+
+-- Loading Bar Animation
+local BarBackground = Instance.new("Frame")
+BarBackground.Size = UDim2.new(0.8, 0, 0, 4)
+BarBackground.Position = UDim2.new(0.1, 0, 0.85, 0)
+BarBackground.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+BarBackground.BorderSizePixel = 0
+BarBackground.Parent = SplashFrame
+
+local BarCorner = Instance.new("UICorner")
+BarCorner.CornerRadius = UDim.new(1, 0)
+BarCorner.Parent = BarBackground
+
+local BarFill = Instance.new("Frame")
+BarFill.Size = UDim2.new(0, 0, 1, 0)
+BarFill.BackgroundColor3 = PrimaryColor == Color3.fromRGB(255, 255, 255) and Color3.fromRGB(240, 240, 245) or PrimaryColor
+BarFill.BorderSizePixel = 0
+BarFill.Parent = BarBackground
+
+local BarFillCorner = Instance.new("UICorner")
+BarFillCorner.CornerRadius = UDim.new(1, 0)
+BarFillCorner.Parent = BarFill
+
+-- Play Loading Bar Tween
+TweenService:Create(BarFill, TweenInfo.new(1.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+    Size = UDim2.new(1, 0, 1, 0)
+}):Play()
+
+task.wait(2.0)
+
+-- Fade out splash
+TweenService:Create(SplashFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+    BackgroundTransparency = 1,
+    Size = UDim2.new(0, 380, 0, 200),
+    Position = UDim2.new(0.5, -190, 0.5, -100)
+}):Play()
+
+task.wait(0.3)
+SplashFrame:Destroy()
+
+-- --------------------------------------------------
+-- MAIN KEY SYSTEM WINDOW
+-- --------------------------------------------------
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
 MainFrame.Size = UDim2.new(0, 600, 0, 350)
@@ -185,9 +271,24 @@ MainStroke.Color = Color3.fromRGB(32, 32, 38)
 MainStroke.Thickness = 1
 MainStroke.Parent = MainFrame
 
--- --------------------------------------------------
--- LEFT CONTAINER (Title, Key Box, User Info)
--- --------------------------------------------------
+-- Unload / Close Button (Top Right X)
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size = UDim2.new(0, 24, 0, 24)
+CloseBtn.Position = UDim2.new(1, -32, 0, 10)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
+CloseBtn.Text = "✕"
+CloseBtn.TextColor3 = Color3.fromRGB(160, 160, 168)
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.TextSize = 12
+CloseBtn.Parent = MainFrame
+
+local CloseCorner = Instance.new("UICorner")
+CloseCorner.CornerRadius = UDim.new(0, 6)
+CloseCorner.Parent = CloseBtn
+
+CloseBtn.MouseButton1Click:Connect(UnloadUI)
+
+-- Left Container
 local LeftFrame = Instance.new("Frame")
 LeftFrame.Size = UDim2.new(0.53, 0, 1, 0)
 LeftFrame.BackgroundTransparency = 1
@@ -204,9 +305,12 @@ LeftPadding.Parent = LeftFrame
 local LogoImg = Instance.new("ImageLabel")
 LogoImg.Size = UDim2.new(0, 34, 0, 34)
 LogoImg.BackgroundTransparency = 1
-LogoImg.Image = LoadAsset(Config.LogoImage)
-LogoImg.ImageColor3 = PrimaryColor
+LogoImg.Image = LoadAsset(SystemIcon)
 LogoImg.Parent = LeftFrame
+
+local LogoCorner = Instance.new("UICorner")
+LogoCorner.CornerRadius = UDim.new(0, 8)
+LogoCorner.Parent = LogoImg
 
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -44, 0, 20)
@@ -236,7 +340,7 @@ KeyBox.Size = UDim2.new(1, 0, 0, 44)
 KeyBox.Position = UDim2.new(0, 0, 0, 85)
 KeyBox.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
 KeyBox.Text = ""
-KeyBox.PlaceholderText = "Paste your key here"
+KeyBox.PlaceholderText = "Paste key here..."
 KeyBox.TextColor3 = Color3.fromRGB(255, 255, 255)
 KeyBox.PlaceholderColor3 = Color3.fromRGB(80, 80, 88)
 KeyBox.Font = Enum.Font.Gotham
@@ -271,7 +375,7 @@ local GetKeyBtn = Instance.new("TextButton")
 GetKeyBtn.Size = UDim2.new(0.48, 0, 0, 40)
 GetKeyBtn.Position = UDim2.new(0.52, 0, 0, 142)
 GetKeyBtn.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
-GetKeyBtn.Text = "Get a key"
+GetKeyBtn.Text = "Get key"
 GetKeyBtn.TextColor3 = Color3.fromRGB(200, 200, 205)
 GetKeyBtn.Font = Enum.Font.Gotham
 GetKeyBtn.TextSize = 13
@@ -285,7 +389,7 @@ local GetKeyStroke = Instance.new("UIStroke")
 GetKeyStroke.Color = Color3.fromRGB(28, 28, 35)
 GetKeyStroke.Parent = GetKeyBtn
 
--- Bottom User Card
+-- Bottom User Profile Card
 local ProfileFrame = Instance.new("Frame")
 ProfileFrame.Size = UDim2.new(1, 0, 0, 40)
 ProfileFrame.Position = UDim2.new(0, 0, 1, -40)
@@ -334,9 +438,7 @@ Divider.BackgroundColor3 = Color3.fromRGB(24, 24, 28)
 Divider.BorderSizePixel = 0
 Divider.Parent = MainFrame
 
--- --------------------------------------------------
--- RIGHT CONTAINER (Detected Game & Discord Details)
--- --------------------------------------------------
+-- Right Container
 local RightFrame = Instance.new("Frame")
 RightFrame.Size = UDim2.new(0.47, 0, 1, 0)
 RightFrame.Position = UDim2.new(0.53, 0, 0, 0)
@@ -350,9 +452,9 @@ RightPadding.PaddingRight = UDim.new(0, 24)
 RightPadding.PaddingBottom = UDim.new(0, 20)
 RightPadding.Parent = RightFrame
 
--- Game Label
+-- Game Section
 local GameHeader = Instance.new("TextLabel")
-GameHeader.Size = UDim2.new(1, 0, 0, 18)
+GameHeader.Size = UDim2.new(1, -30, 0, 18)
 GameHeader.BackgroundTransparency = 1
 GameHeader.Text = "Detected game"
 GameHeader.TextColor3 = Color3.fromRGB(120, 120, 128)
@@ -361,7 +463,6 @@ GameHeader.Font = Enum.Font.Gotham
 GameHeader.TextXAlignment = Enum.TextXAlignment.Left
 GameHeader.Parent = RightFrame
 
--- Detected Game Card
 local GameCard = Instance.new("Frame")
 GameCard.Size = UDim2.new(1, 0, 0, 75)
 GameCard.Position = UDim2.new(0, 0, 0, 26)
@@ -429,107 +530,4 @@ DiscordStroke.Parent = DiscordCard
 
 local DiscordImg = Instance.new("ImageLabel")
 DiscordImg.Size = UDim2.new(0, 42, 0, 42)
-DiscordImg.Position = UDim2.new(0, 12, 0, 14)
-DiscordImg.BackgroundColor3 = Color3.fromRGB(24, 24, 28)
-DiscordImg.Image = (DiscordData.Icon ~= "") and LoadAsset(DiscordData.Icon) or LoadAsset(Config.LogoImage)
-DiscordImg.Parent = DiscordCard
-
-local DiscordImgCorner = Instance.new("UICorner")
-DiscordImgCorner.CornerRadius = UDim.new(0, 8)
-DiscordImgCorner.Parent = DiscordImg
-
-local DiscordTitle = Instance.new("TextLabel")
-DiscordTitle.Size = UDim2.new(1, -64, 0, 20)
-DiscordTitle.Position = UDim2.new(0, 60, 0, 14)
-DiscordTitle.BackgroundTransparency = 1
-DiscordTitle.Text = DiscordData.Name
-DiscordTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
-DiscordTitle.TextSize = 13
-DiscordTitle.Font = Enum.Font.GothamBold
-DiscordTitle.TextXAlignment = Enum.TextXAlignment.Left
-DiscordTitle.TextTruncate = Enum.TextTruncate.AtEnd
-DiscordTitle.Parent = DiscordCard
-
-local DiscordLink = Instance.new("TextLabel")
-DiscordLink.Size = UDim2.new(1, -64, 0, 16)
-DiscordLink.Position = UDim2.new(0, 60, 0, 32)
-DiscordLink.BackgroundTransparency = 1
-DiscordLink.Text = Config.DiscordInvite
-DiscordLink.TextColor3 = Color3.fromRGB(120, 120, 128)
-DiscordLink.TextSize = 11
-DiscordLink.Font = Enum.Font.Gotham
-DiscordLink.TextXAlignment = Enum.TextXAlignment.Left
-DiscordLink.TextTruncate = Enum.TextTruncate.AtEnd
-DiscordLink.Parent = DiscordCard
-
--- Discord Member Counts (Online / Offline / Total)
-local OnlineStat = Instance.new("TextLabel")
-OnlineStat.Size = UDim2.new(0.48, 0, 0, 20)
-OnlineStat.Position = UDim2.new(0, 12, 0, 72)
-OnlineStat.BackgroundTransparency = 1
-OnlineStat.Text = "● " .. FormatNumber(DiscordData.Online) .. " Online"
-OnlineStat.TextColor3 = Color3.fromRGB(46, 204, 113)
-OnlineStat.TextSize = 12
-OnlineStat.Font = Enum.Font.GothamBold
-OnlineStat.TextXAlignment = Enum.TextXAlignment.Left
-OnlineStat.Parent = DiscordCard
-
-local OfflineStat = Instance.new("TextLabel")
-OfflineStat.Size = UDim2.new(0.48, 0, 0, 20)
-OfflineStat.Position = UDim2.new(0.5, 0, 0, 72)
-OfflineStat.BackgroundTransparency = 1
-OfflineStat.Text = "● " .. FormatNumber(DiscordData.Offline) .. " Offline"
-OfflineStat.TextColor3 = Color3.fromRGB(140, 140, 148)
-OfflineStat.TextSize = 12
-OfflineStat.Font = Enum.Font.GothamBold
-OfflineStat.TextXAlignment = Enum.TextXAlignment.Left
-OfflineStat.Parent = DiscordCard
-
-local TotalStat = Instance.new("TextLabel")
-TotalStat.Size = UDim2.new(1, -24, 0, 18)
-TotalStat.Position = UDim2.new(0, 12, 0, 94)
-TotalStat.BackgroundTransparency = 1
-TotalStat.Text = "Total Members: " .. FormatNumber(DiscordData.Total)
-TotalStat.TextColor3 = Color3.fromRGB(90, 90, 98)
-TotalStat.TextSize = 11
-TotalStat.Font = Enum.Font.Gotham
-TotalStat.TextXAlignment = Enum.TextXAlignment.Left
-TotalStat.Parent = DiscordCard
-
--- ================================================== --
---                   SCRIPT LOGIC                     --
--- ================================================== --
-
-GetKeyBtn.MouseButton1Click:Connect(function()
-    if setclipboard then
-        setclipboard(Config.KeyLink)
-        KeyBox.Text = "Link copied to clipboard!"
-        task.wait(1.5)
-        KeyBox.Text = ""
-    end
-end)
-
-SubmitBtn.MouseButton1Click:Connect(function()
-    local inputKey = KeyBox.Text
-    
-    if inputKey == Config.RequiredKey or Config.RequiredKey == "" then
-        SubmitBtn.Text = "Loading..."
-        
-        local scriptUrl = Config.Scripts[game.PlaceId]
-        if scriptUrl then
-            ScreenGui:Destroy()
-            pcall(function()
-                loadstring(game:HttpGet(scriptUrl))()
-            end)
-        else
-            KeyBox.Text = "Game not supported!"
-            SubmitBtn.Text = "Submit"
-            task.wait(2)
-            KeyBox.Text = ""
-        end
-    else
-        KeyBox.Text = "Invalid Key!"
-        task.wait(1.5)
-        KeyBox.Text = ""
-    end
-end)
+DiscordImg.
