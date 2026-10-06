@@ -1,13 +1,24 @@
--- ================================================== --
---          PROJECTNEAR MAIN CORE ENGINE (PN)         --
--- ================================================== --
+-- ===================================================================== --
+--                PROJECTNEAR ADVANCED ENTERPRISE ENGINE                 --
+--                FULL CORE ARCHITECTURE & KEY SYSTEM                    --
+-- ===================================================================== --
+
+-- Ensure single execution instance & cleanup previous sessions
+if getgenv().ProjectNearLoaded then
+    pcall(function() getgenv().ProjectNear.Unload() end)
+end
+getgenv().ProjectNearLoaded = true
+
+-- ===================================================================== --
+-- CONFIGURATION & ENVIRONMENT SETUP                                     --
+-- ===================================================================== --
 
 local Config = getgenv().ProjectNearConfig or {
     Name = "ProjectNear",
-    SubTitle = "Key System",
+    SubTitle = "Advanced Enterprise Key System",
     Color = "Black",
     Icon = "https://tse2.mm.bing.net/th/id/OIP.D4YsNmN5zO74acHPtHb-SQHaHa?r=0&rs=1&pid=ImgDetMain&o=7&rm=3",
-    LoadingGreeting = "Yoo {username} thanks for executing, YOU DA GOAT OF GOATS",
+    LoadingGreeting = "Initializing Core Systems for {username}...",
     RequiredKey = "1234",
     KeyLink = "https://discord.gg/7tEsxYAny",
     DiscordInvite = "discord.gg/7tEsxYAny",
@@ -15,9 +26,9 @@ local Config = getgenv().ProjectNearConfig or {
     Scripts = {}
 }
 
--- Safe Fallbacks & Colors
+-- Core Fallbacks & Configuration Constants
 local SafeFallbackIcon = "rbxassetid://6031097225"
-local SystemIcon = (Config.Icon and Config.Icon ~= "") and Config.Icon or SafeFallbackIcon
+local SystemIconUrl = (Config.Icon and Config.Icon ~= "") and Config.Icon or SafeFallbackIcon
 
 local ColorPresets = {
     ["Black"]  = Color3.fromRGB(255, 255, 255),
@@ -29,25 +40,32 @@ local ColorPresets = {
     ["Red"]    = Color3.fromRGB(240, 60, 60),
     ["Cyan"]   = Color3.fromRGB(0, 220, 240)
 }
+
 local PrimaryColor = typeof(Config.Color) == "Color3" and Config.Color or (ColorPresets[Config.Color] or Color3.fromRGB(255, 255, 255))
 
--- Services
+-- Services Initialization with Load Check
 repeat task.wait() until game:IsLoaded()
+
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 local MarketplaceService = game:GetService("MarketplaceService")
 local TweenService = game:GetService("TweenService")
+local CoreGui = game:GetService("CoreGui")
+local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
--- Variables
-local pName = LocalPlayer and LocalPlayer.Name or "Player"
-local pId = LocalPlayer and LocalPlayer.UserId or 1
-local GameIcon = "rbxthumb://type=GameIcon&id=" .. game.PlaceId .. "&w=150&h=150"
-local isSupported = Config.Scripts and Config.Scripts[game.PlaceId]
+-- Runtime Telemetry Variables
+local PlayerUsername = LocalPlayer and LocalPlayer.Name or "Developer"
+local PlayerUserId = LocalPlayer and LocalPlayer.UserId or 1
+local GameIconUrl = "rbxthumb://type=GameIcon&id=" .. game.PlaceId .. "&w=150&h=150"
+local IsGameSupported = Config.Scripts and Config.Scripts[game.PlaceId] ~= nil
 
--- Utility: Format Numbers
-local function FormatNumber(num)
-    local formatted = tostring(math.floor(tonumber(num) or 0))
+-- ===================================================================== --
+-- UTILITY FUNCTIONS & FORMATTERS                                        --
+-- ===================================================================== --
+
+local function FormatNumber(value)
+    local formatted = tostring(math.floor(tonumber(value) or 0))
     while true do
         local k
         formatted, k = string.gsub(formatted, "^(-?%d+)(%d%d%d)", '%1,%2')
@@ -56,61 +74,579 @@ local function FormatNumber(num)
     return formatted
 end
 
--- Utility: Asynchronous Image Loader (Prevents Freezing)
-local function ApplyImage(uiElement, url, fallback)
-    uiElement.Image = fallback or SafeFallbackIcon
-    if not url or url == "" then return end
-    if url:find("rbxassetid://") or url:find("rbxthumb://") then
-        uiElement.Image = url
+-- Fixed Image Caching Engine: Handles Web URLs, Discord Icons, and Roblox Assets Safely
+local function ApplyImage(targetElement, targetUrl, fallbackAsset)
+    targetElement.Image = fallbackAsset or SafeFallbackIcon
+    if not targetUrl or targetUrl == "" then return end
+    
+    if targetUrl:find("rbxassetid://") or targetUrl:find("rbxthumb://") then
+        targetElement.Image = targetUrl
         return
     end
-    if url:find("http") then
+    
+    if targetUrl:find("http") then
         task.spawn(function()
-            if writefile and getcustomasset and isfile then
-                local cleanName = "PN_Asset_" .. string.gsub(url, "%W", ""):sub(-15) .. ".png"
+            local assetLoadedSuccessfully = false
+            pcall(function()
+                if writefile and getcustomasset and isfile and readfile then
+                    local sanitizedFileName = "PN_AssetCache_" .. string.gsub(targetUrl, "%W", ""):sub(-16) .. ".png"
+                    if not isfile(sanitizedFileName) then
+                        local rawWebData = game:HttpGet(targetUrl)
+                        if rawWebData and #rawWebData > 0 then
+                            writefile(sanitizedFileName, rawWebData)
+                        end
+                    end
+                    if isfile(sanitizedFileName) then
+                        targetElement.Image = getcustomasset(sanitizedFileName)
+                        assetLoadedSuccessfully = true
+                    end
+                end
+            end)
+            
+            if not assetLoadedSuccessfully then
                 pcall(function()
-                    if not isfile(cleanName) then
-                        local raw = game:HttpGet(url)
-                        if raw then writefile(cleanName, raw) end
-                    end
-                    if isfile(cleanName) then
-                        uiElement.Image = getcustomasset(cleanName)
-                    end
+                    targetElement.Image = targetUrl
                 end)
             end
         end)
     end
 end
 
--- Utility: Jnkie Verification
-local function VerifyJnkieKey(userKey)
+local function VerifyJnkieKeyService(userKeyInput)
     if not Config.Jnkie or not Config.Jnkie.Enabled then return false end
-    local url = string.format("https://jnkie.com/api/v1/verify?key=%s&service=%s&api_key=%s", 
-        HttpService:UrlEncode(userKey), 
+    local endpointUrl = string.format("https://jnkie.com/api/v1/verify?key=%s&service=%s&api_key=%s", 
+        HttpService:UrlEncode(userKeyInput), 
         HttpService:UrlEncode(Config.Jnkie.ServiceId or ""), 
         HttpService:UrlEncode(Config.Jnkie.ApiKey or "")
     )
-    local success, response = pcall(function() return game:HttpGet(url) end)
-    if success and response then
-        local ok, data = pcall(function() return HttpService:JSONDecode(response) end)
-        if ok and data then
-            return data.status == "valid" or data.success == true
+    local success, responseBody = pcall(function()
+        return game:HttpGet(endpointUrl)
+    end)
+    if success and responseBody then
+        local decodeSuccess, decodedData = pcall(function()
+            return HttpService:JSONDecode(responseBody)
+        end)
+        if decodeSuccess and decodedData then
+            return decodedData.status == "valid" or decodedData.success == true
         end
     end
     return false
 end
 
--- --------------------------------------------------
--- GUI CREATION (Zero Yielding Architecture)
--- --------------------------------------------------
-local TargetParent
-pcall(function() TargetParent = gethui and gethui() or game:GetService("CoreGui") end)
-if not TargetParent or not pcall(function() local _ = TargetParent.Name end) then
-    TargetParent = LocalPlayer:WaitForChild("PlayerGui")
+-- ===================================================================== --
+-- UI CONTAINER & ROOT CREATION                                          --
+-- ===================================================================== --
+
+local TargetParentContainer
+pcall(function()
+    TargetParentContainer = gethui and gethui() or CoreGui
+end)
+if not TargetParentContainer or not pcall(function() local _ = TargetParentContainer.Name end) then
+    TargetParentContainer = LocalPlayer:WaitForChild("PlayerGui")
 end
 
-if TargetParent:FindFirstChild("ProjectNearKeyUI") then
-    TargetParent.ProjectNearKeyUI:Destroy()
+if TargetParentContainer:FindFirstChild("ProjectNearEnterpriseUI") then
+    TargetParentContainer.ProjectNearEnterpriseUI:Destroy()
 end
 
-local ScreenGui = Instance.new
+local ScreenGuiRoot = Instance.new("ScreenGui")
+ScreenGuiRoot.Name = "ProjectNearEnterpriseUI"
+ScreenGuiRoot.ResetOnSpawn = false
+ScreenGuiRoot.DisplayOrder = 99999
+ScreenGuiRoot.IgnoreGuiInset = true
+ScreenGuiRoot.Parent = TargetParentContainer
+
+local function UnloadInterface()
+    pcall(function()
+        getgenv().ProjectNearLoaded = nil
+        if ScreenGuiRoot then
+            ScreenGuiRoot:Destroy()
+        end
+    end)
+end
+
+getgenv().ProjectNear = {
+    Unload = UnloadInterface,
+    Version = "3.1.0-Enterprise"
+}
+
+-- ===================================================================== --
+-- SPLASH SCREEN CONSTRUCTION (LOADING PHASE)                            --
+-- ===================================================================== --
+
+local SplashContainer = Instance.new("Frame")
+SplashContainer.Name = "SplashContainer"
+SplashContainer.Size = UDim2.new(0, 420, 0, 230)
+SplashContainer.Position = UDim2.new(0.5, -210, 0.5, -115)
+SplashContainer.BackgroundColor3 = Color3.fromRGB(12, 12, 15)
+SplashContainer.BorderSizePixel = 0
+SplashContainer.ClipsDescendants = true
+SplashContainer.Parent = ScreenGuiRoot
+
+local SplashCorner = Instance.new("UICorner", SplashContainer)
+SplashCorner.CornerRadius = UDim.new(0, 16)
+
+local SplashStroke = Instance.new("UIStroke", SplashContainer)
+SplashStroke.Color = Color3.fromRGB(35, 35, 42)
+SplashStroke.Thickness = 1.2
+
+local SplashLogo = Instance.new("ImageLabel", SplashContainer)
+SplashLogo.Name = "SplashLogo"
+SplashLogo.Size = UDim2.new(0, 64, 0, 64)
+SplashLogo.Position = UDim2.new(0.5, -32, 0.22, -10)
+SplashLogo.BackgroundTransparency = 1
+ApplyImage(SplashLogo, SystemIconUrl, SafeFallbackIcon)
+Instance.new("UICorner", SplashLogo).CornerRadius = UDim.new(0, 12)
+
+local SplashGreetingLabel = Instance.new("TextLabel", SplashContainer)
+SplashGreetingLabel.Name = "SplashGreetingLabel"
+SplashGreetingLabel.Size = UDim2.new(1, -40, 0, 50)
+SplashGreetingLabel.Position = UDim2.new(0, 20, 0.52, 0)
+SplashGreetingLabel.BackgroundTransparency = 1
+SplashGreetingLabel.Text = (Config.LoadingGreeting or "Welcome {username}"):gsub("{username}", PlayerUsername)
+SplashGreetingLabel.TextColor3 = Color3.fromRGB(245, 245, 250)
+SplashGreetingLabel.TextSize = 13
+SplashGreetingLabel.Font = Enum.Font.GothamBold
+SplashGreetingLabel.TextWrapped = true
+SplashGreetingLabel.TextXAlignment = Enum.TextXAlignment.Center
+SplashGreetingLabel.TextYAlignment = Enum.TextYAlignment.Center
+
+local LoadingBarBackground = Instance.new("Frame", SplashContainer)
+LoadingBarBackground.Name = "LoadingBarBackground"
+LoadingBarBackground.Size = UDim2.new(0.82, 0, 0, 5)
+LoadingBarBackground.Position = UDim2.new(0.09, 0, 0.84, 0)
+LoadingBarBackground.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
+LoadingBarBackground.BorderSizePixel = 0
+Instance.new("UICorner", LoadingBarBackground).CornerRadius = UDim.new(1, 0)
+
+local LoadingBarFill = Instance.new("Frame", LoadingBarBackground)
+LoadingBarFill.Name = "LoadingBarFill"
+LoadingBarFill.Size = UDim2.new(0, 0, 1, 0)
+LoadingBarFill.BackgroundColor3 = PrimaryColor == Color3.fromRGB(255, 255, 255) and Color3.fromRGB(240, 240, 245) or PrimaryColor
+LoadingBarFill.BorderSizePixel = 0
+Instance.new("UICorner", LoadingBarFill).CornerRadius = UDim.new(1, 0)
+
+-- ===================================================================== --
+-- MAIN INTERFACE CONSTRUCTION (HIDDEN INITIALLY)                        --
+-- ===================================================================== --
+
+local MainDashboardFrame = Instance.new("Frame")
+MainDashboardFrame.Name = "MainDashboardFrame"
+MainDashboardFrame.Size = UDim2.new(0, 580, 0, 340)
+MainDashboardFrame.Position = UDim2.new(0.5, -290, 0.5, -170)
+MainDashboardFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 13)
+MainDashboardFrame.BorderSizePixel = 0
+MainDashboardFrame.Active = true
+MainDashboardFrame.Draggable = true
+MainDashboardFrame.Visible = false
+MainDashboardFrame.ClipsDescendants = true
+MainDashboardFrame.Parent = ScreenGuiRoot
+
+Instance.new("UICorner", MainDashboardFrame).CornerRadius = UDim.new(0, 14)
+
+local DashboardStroke = Instance.new("UIStroke", MainDashboardFrame)
+DashboardStroke.Color = Color3.fromRGB(36, 36, 45)
+DashboardStroke.Thickness = 1.2
+
+-- Close Button Component
+local MasterCloseButton = Instance.new("TextButton", MainDashboardFrame)
+MasterCloseButton.Name = "MasterCloseButton"
+MasterCloseButton.Size = UDim2.new(0, 26, 0, 26)
+MasterCloseButton.Position = UDim2.new(1, -36, 0, 12)
+MasterCloseButton.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+MasterCloseButton.Text = "✕"
+MasterCloseButton.TextColor3 = Color3.fromRGB(160, 160, 170)
+MasterCloseButton.Font = Enum.Font.GothamBold
+MasterCloseButton.TextSize = 12
+Instance.new("UICorner", MasterCloseButton).CornerRadius = UDim.new(0, 6)
+
+MasterCloseButton.MouseButton1Click:Connect(function()
+    UnloadInterface()
+end)
+
+-- Left Pane (Authentication & Profile Info)
+local LeftPane = Instance.new("Frame", MainDashboardFrame)
+LeftPane.Name = "LeftPane"
+LeftPane.Size = UDim2.new(0.52, 0, 1, 0)
+LeftPane.BackgroundTransparency = 1
+
+local LeftPanePadding = Instance.new("UIPadding", LeftPane)
+LeftPanePadding.PaddingTop = UDim.new(0, 24)
+LeftPanePadding.PaddingLeft = UDim.new(0, 24)
+LeftPanePadding.PaddingRight = UDim.new(0, 16)
+LeftPanePadding.PaddingBottom = UDim.new(0, 20)
+
+local BrandLogo = Instance.new("ImageLabel", LeftPane)
+BrandLogo.Name = "BrandLogo"
+BrandLogo.Size = UDim2.new(0, 36, 0, 36)
+BrandLogo.BackgroundTransparency = 1
+ApplyImage(BrandLogo, SystemIconUrl, SafeFallbackIcon)
+Instance.new("UICorner", BrandLogo).CornerRadius = UDim.new(0, 8)
+
+local BrandTitle = Instance.new("TextLabel", LeftPane)
+BrandTitle.Name = "BrandTitle"
+BrandTitle.Size = UDim2.new(1, -44, 0, 20)
+BrandTitle.Position = UDim2.new(0, 44, 0, 0)
+BrandTitle.BackgroundTransparency = 1
+BrandTitle.Text = Config.Name or "ProjectNear"
+BrandTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+BrandTitle.TextSize = 20
+BrandTitle.Font = Enum.Font.GothamBold
+BrandTitle.TextXAlignment = Enum.TextXAlignment.Left
+
+local BrandSubTitle = Instance.new("TextLabel", LeftPane)
+BrandSubTitle.Name = "BrandSubTitle"
+BrandSubTitle.Size = UDim2.new(1, -44, 0, 14)
+BrandSubTitle.Position = UDim2.new(0, 44, 0, 20)
+BrandSubTitle.BackgroundTransparency = 1
+BrandSubTitle.Text = Config.SubTitle or "Key System"
+BrandSubTitle.TextColor3 = Color3.fromRGB(130, 130, 140)
+BrandSubTitle.TextSize = 11
+BrandSubTitle.Font = Enum.Font.Gotham
+BrandSubTitle.TextXAlignment = Enum.TextXAlignment.Left
+
+local InputKeyTextBox = Instance.new("TextBox", LeftPane)
+InputKeyTextBox.Name = "InputKeyTextBox"
+InputKeyTextBox.Size = UDim2.new(1, 0, 0, 46)
+InputKeyTextBox.Position = UDim2.new(0, 0, 0, 88)
+InputKeyTextBox.BackgroundColor3 = Color3.fromRGB(16, 16, 20)
+InputKeyTextBox.Text = ""
+InputKeyTextBox.PlaceholderText = "Enter license key..."
+InputKeyTextBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+InputKeyTextBox.PlaceholderColor3 = Color3.fromRGB(75, 75, 85)
+InputKeyTextBox.Font = Enum.Font.Gotham
+InputKeyTextBox.TextSize = 13
+Instance.new("UICorner", InputKeyTextBox).CornerRadius = UDim.new(0, 8)
+local TextBoxStroke = Instance.new("UIStroke", InputKeyTextBox)
+TextBoxStroke.Color = Color3.fromRGB(28, 28, 36)
+
+local SubmitKeyButton = Instance.new("TextButton", LeftPane)
+SubmitKeyButton.Name = "SubmitKeyButton"
+SubmitKeyButton.Size = UDim2.new(0.48, 0, 0, 42)
+SubmitKeyButton.Position = UDim2.new(0, 0, 0, 146)
+SubmitKeyButton.BackgroundColor3 = PrimaryColor == Color3.fromRGB(255, 255, 255) and Color3.fromRGB(240, 240, 245) or PrimaryColor
+SubmitKeyButton.Text = "Submit Key"
+SubmitKeyButton.TextColor3 = Color3.fromRGB(10, 10, 14)
+SubmitKeyButton.Font = Enum.Font.GothamBold
+SubmitKeyButton.TextSize = 13
+Instance.new("UICorner", SubmitKeyButton).CornerRadius = UDim.new(0, 8)
+
+local GetKeyUrlButton = Instance.new("TextButton", LeftPane)
+GetKeyUrlButton.Name = "GetKeyUrlButton"
+GetKeyUrlButton.Size = UDim2.new(0.48, 0, 0, 42)
+GetKeyUrlButton.Position = UDim2.new(0.52, 0, 0, 146)
+GetKeyUrlButton.BackgroundColor3 = Color3.fromRGB(16, 16, 20)
+GetKeyUrlButton.Text = "Get Key"
+GetKeyUrlButton.TextColor3 = Color3.fromRGB(200, 200, 210)
+GetKeyUrlButton.Font = Enum.Font.Gotham
+GetKeyUrlButton.TextSize = 13
+Instance.new("UICorner", GetKeyUrlButton).CornerRadius = UDim.new(0, 8)
+local GetKeyStroke = Instance.new("UIStroke", GetKeyUrlButton)
+GetKeyStroke.Color = Color3.fromRGB(28, 28, 36)
+
+-- User Profile Widget Card at Bottom Left
+local UserProfileContainer = Instance.new("Frame", LeftPane)
+UserProfileContainer.Name = "UserProfileContainer"
+UserProfileContainer.Size = UDim2.new(1, 0, 0, 44)
+UserProfileContainer.Position = UDim2.new(0, 0, 1, -44)
+UserProfileContainer.BackgroundTransparency = 1
+
+local UserAvatarImage = Instance.new("ImageLabel", UserProfileContainer)
+UserAvatarImage.Name = "UserAvatarImage"
+UserAvatarImage.Size = UDim2.new(0, 40, 0, 40)
+UserAvatarImage.Position = UDim2.new(0, 0, 0, 2)
+UserAvatarImage.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+UserAvatarImage.Image = "rbxthumb://type=AvatarHeadShot&id=" .. PlayerUserId .. "&w=150&h=150"
+Instance.new("UICorner", UserAvatarImage).CornerRadius = UDim.new(1, 0)
+
+local WelcomeTitleLabel = Instance.new("TextLabel", UserProfileContainer)
+WelcomeTitleLabel.Name = "WelcomeTitleLabel"
+WelcomeTitleLabel.Size = UDim2.new(1, -50, 0, 14)
+WelcomeTitleLabel.Position = UDim2.new(0, 50, 0, 4)
+WelcomeTitleLabel.BackgroundTransparency = 1
+WelcomeTitleLabel.Text = "Authenticated User"
+WelcomeTitleLabel.TextColor3 = Color3.fromRGB(110, 110, 120)
+WelcomeTitleLabel.TextSize = 11
+WelcomeTitleLabel.Font = Enum.Font.Gotham
+WelcomeTitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local UsernameTextLabel = Instance.new("TextLabel", UserProfileContainer)
+UsernameTextLabel.Name = "UsernameTextLabel"
+UsernameTextLabel.Size = UDim2.new(1, -50, 0, 18)
+UsernameTextLabel.Position = UDim2.new(0, 50, 0, 18)
+UsernameTextLabel.BackgroundTransparency = 1
+UsernameTextLabel.Text = PlayerUsername
+UsernameTextLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+UsernameTextLabel.TextSize = 13
+UsernameTextLabel.Font = Enum.Font.GothamBold
+UsernameTextLabel.TextXAlignment = Enum.TextXAlignment.Left
+UsernameTextLabel.TextTruncate = Enum.TextTruncate.AtEnd
+
+-- Center Divider Line
+local VerticalDivider = Instance.new("Frame", MainDashboardFrame)
+VerticalDivider.Name = "VerticalDivider"
+VerticalDivider.Size = UDim2.new(0, 1, 1, -40)
+VerticalDivider.Position = UDim2.new(0.52, 0, 0, 20)
+VerticalDivider.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
+VerticalDivider.BorderSizePixel = 0
+
+-- Right Pane (Game Telemetry & Discord Metrics)
+local RightPane = Instance.new("Frame", MainDashboardFrame)
+RightPane.Name = "RightPane"
+RightPane.Size = UDim2.new(0.48, 0, 1, 0)
+RightPane.Position = UDim2.new(0.52, 0, 0, 0)
+RightPane.BackgroundTransparency = 1
+
+local RightPanePadding = Instance.new("UIPadding", RightPane)
+RightPanePadding.PaddingTop = UDim.new(0, 24)
+RightPanePadding.PaddingLeft = UDim.new(0, 16)
+RightPanePadding.PaddingRight = UDim.new(0, 24)
+RightPanePadding.PaddingBottom = UDim.new(0, 20)
+
+local GameHeaderTitle = Instance.new("TextLabel", RightPane)
+GameHeaderTitle.Name = "GameHeaderTitle"
+GameHeaderTitle.Size = UDim2.new(1, 0, 0, 18)
+GameHeaderTitle.BackgroundTransparency = 1
+GameHeaderTitle.Text = "Target Telemetry"
+GameHeaderTitle.TextColor3 = Color3.fromRGB(120, 120, 130)
+GameHeaderTitle.TextSize = 12
+GameHeaderTitle.Font = Enum.Font.Gotham
+GameHeaderTitle.TextXAlignment = Enum.TextXAlignment.Left
+
+-- Game Card Widget
+local GameCardFrame = Instance.new("Frame", RightPane)
+GameCardFrame.Name = "GameCardFrame"
+GameCardFrame.Size = UDim2.new(1, 0, 0, 78)
+GameCardFrame.Position = UDim2.new(0, 0, 0, 26)
+GameCardFrame.BackgroundColor3 = Color3.fromRGB(16, 16, 20)
+Instance.new("UICorner", GameCardFrame).CornerRadius = UDim.new(0, 10)
+local GameCardStroke = Instance.new("UIStroke", GameCardFrame)
+GameCardStroke.Color = Color3.fromRGB(28, 28, 36)
+
+local GameCardIcon = Instance.new("ImageLabel", GameCardFrame)
+GameCardIcon.Name = "GameCardIcon"
+GameCardIcon.Size = UDim2.new(0, 54, 0, 54)
+GameCardIcon.Position = UDim2.new(0, 12, 0.5, -27)
+GameCardIcon.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
+GameCardIcon.Image = GameIconUrl
+Instance.new("UICorner", GameCardIcon).CornerRadius = UDim.new(0, 8)
+
+local GameNameDisplay = Instance.new("TextLabel", GameCardFrame)
+GameNameDisplay.Name = "GameNameDisplay"
+GameNameDisplay.Size = UDim2.new(1, -76, 0, 32)
+GameNameDisplay.Position = UDim2.new(0, 74, 0, 12)
+GameNameDisplay.BackgroundTransparency = 1
+GameNameDisplay.Text = "Resolving Game..."
+GameNameDisplay.TextColor3 = Color3.fromRGB(255, 255, 255)
+GameNameDisplay.TextSize = 12
+GameNameDisplay.Font = Enum.Font.GothamBold
+GameNameDisplay.TextXAlignment = Enum.TextXAlignment.Left
+GameNameDisplay.TextYAlignment = Enum.TextYAlignment.Top
+GameNameDisplay.TextWrapped = true
+
+local GameSupportStatus = Instance.new("TextLabel", GameCardFrame)
+GameSupportStatus.Name = "GameSupportStatus"
+GameSupportStatus.Size = UDim2.new(1, -76, 0, 16)
+GameSupportStatus.Position = UDim2.new(0, 74, 0, 46)
+GameSupportStatus.BackgroundTransparency = 1
+GameSupportStatus.Text = IsGameSupported and "● Status: Supported" or "● Status: Unsupported"
+GameSupportStatus.TextColor3 = IsGameSupported and Color3.fromRGB(40, 200, 100) or Color3.fromRGB(240, 60, 60)
+GameSupportStatus.TextSize = 11
+GameSupportStatus.Font = Enum.Font.Gotham
+GameSupportStatus.TextXAlignment = Enum.TextXAlignment.Left
+
+-- Discord Card Widget
+local DiscordCardFrame = Instance.new("Frame", RightPane)
+DiscordCardFrame.Name = "DiscordCardFrame"
+DiscordCardFrame.Size = UDim2.new(1, 0, 0, 130)
+DiscordCardFrame.Position = UDim2.new(0, 0, 0, 116)
+DiscordCardFrame.BackgroundColor3 = Color3.fromRGB(16, 16, 20)
+Instance.new("UICorner", DiscordCardFrame).CornerRadius = UDim.new(0, 10)
+local DiscordCardStroke = Instance.new("UIStroke", DiscordCardFrame)
+DiscordCardStroke.Color = Color3.fromRGB(28, 28, 36)
+
+local DiscordAvatarIcon = Instance.new("ImageLabel", DiscordCardFrame)
+DiscordAvatarIcon.Name = "DiscordAvatarIcon"
+DiscordAvatarIcon.Size = UDim2.new(0, 42, 0, 42)
+DiscordAvatarIcon.Position = UDim2.new(0, 12, 0, 14)
+DiscordAvatarIcon.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
+ApplyImage(DiscordAvatarIcon, SystemIconUrl, SafeFallbackIcon)
+Instance.new("UICorner", DiscordAvatarIcon).CornerRadius = UDim.new(0, 8)
+
+local DiscordCommunityTitle = Instance.new("TextLabel", DiscordCardFrame)
+DiscordCommunityTitle.Name = "DiscordCommunityTitle"
+DiscordCommunityTitle.Size = UDim2.new(1, -64, 0, 20)
+DiscordCommunityTitle.Position = UDim2.new(0, 62, 0, 14)
+DiscordCommunityTitle.BackgroundTransparency = 1
+DiscordCommunityTitle.Text = "Community Hub"
+DiscordCommunityTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+DiscordCommunityTitle.TextSize = 13
+DiscordCommunityTitle.Font = Enum.Font.GothamBold
+DiscordCommunityTitle.TextXAlignment = Enum.TextXAlignment.Left
+
+local DiscordInviteLinkText = Instance.new("TextLabel", DiscordCardFrame)
+DiscordInviteLinkText.Name = "DiscordInviteLinkText"
+DiscordInviteLinkText.Size = UDim2.new(1, -64, 0, 16)
+DiscordInviteLinkText.Position = UDim2.new(0, 62, 0, 32)
+DiscordInviteLinkText.BackgroundTransparency = 1
+DiscordInviteLinkText.Text = Config.DiscordInvite or ""
+DiscordInviteLinkText.TextColor3 = Color3.fromRGB(120, 120, 130)
+DiscordInviteLinkText.TextSize = 11
+DiscordInviteLinkText.Font = Enum.Font.Gotham
+DiscordInviteLinkText.TextXAlignment = Enum.TextXAlignment.Left
+
+local OnlineMembersLabel = Instance.new("TextLabel", DiscordCardFrame)
+OnlineMembersLabel.Name = "OnlineMembersLabel"
+OnlineMembersLabel.Size = UDim2.new(0.48, 0, 0, 20)
+OnlineMembersLabel.Position = UDim2.new(0, 12, 0, 72)
+OnlineMembersLabel.BackgroundTransparency = 1
+OnlineMembersLabel.Text = "● Syncing..."
+OnlineMembersLabel.TextColor3 = Color3.fromRGB(40, 200, 100)
+OnlineMembersLabel.TextSize = 11
+OnlineMembersLabel.Font = Enum.Font.GothamBold
+OnlineMembersLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local OfflineMembersLabel = Instance.new("TextLabel", DiscordCardFrame)
+OfflineMembersLabel.Name = "OfflineMembersLabel"
+OfflineMembersLabel.Size = UDim2.new(0.48, 0, 0, 20)
+OfflineMembersLabel.Position = UDim2.new(0.5, 0, 0, 72)
+OfflineMembersLabel.BackgroundTransparency = 1
+OfflineMembersLabel.Text = "● Syncing..."
+OfflineMembersLabel.TextColor3 = Color3.fromRGB(140, 140, 150)
+OfflineMembersLabel.TextSize = 11
+OfflineMembersLabel.Font = Enum.Font.GothamBold
+OfflineMembersLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local TotalMembersLabel = Instance.new("TextLabel", DiscordCardFrame)
+TotalMembersLabel.Name = "TotalMembersLabel"
+TotalMembersLabel.Size = UDim2.new(1, -24, 0, 18)
+TotalMembersLabel.Position = UDim2.new(0, 12, 0, 96)
+TotalMembersLabel.BackgroundTransparency = 1
+TotalMembersLabel.Text = "Total Members: Fetching..."
+TotalMembersLabel.TextColor3 = Color3.fromRGB(90, 90, 100)
+TotalMembersLabel.TextSize = 11
+TotalMembersLabel.Font = Enum.Font.Gotham
+TotalMembersLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+-- ===================================================================== --
+-- THREADED BOOT SEQUENCE & ASYNCHRONOUS DATA FETCHERS                   --
+-- ===================================================================== --
+
+-- Execute Splash Bar Fill Animation
+TweenService:Create(LoadingBarFill, TweenInfo.new(1.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+    Size = UDim2.new(1, 0, 1, 0)
+}):Play()
+
+-- Background Thread: Fetch Marketplace Product Title
+task.spawn(function()
+    task.wait()
+    pcall(function()
+        local productInfo = MarketplaceService:GetProductInfo(game.PlaceId)
+        if productInfo and productInfo.Name then
+            GameNameDisplay.Text = productInfo.Name
+        end
+    end)
+end)
+
+-- Background Thread: Fetch Discord Guild Telemetry & Dynamic Guild Icon
+task.spawn(function()
+    task.wait()
+    local rawInviteString = Config.DiscordInvite or ""
+    local extractedInviteCode = rawInviteString:split("?")[1]:split("#")[1]:match("discord%.gg/([%w%-]+)") or rawInviteString:match("^([%w%-]+)$") or ""
+    
+    if extractedInviteCode ~= "" then
+        pcall(function()
+            local rawResponse = game:HttpGet("https://discord.com/api/v10/invites/" .. extractedInviteCode .. "?with_counts=true")
+            local parsedGuildData = HttpService:JSONDecode(rawResponse)
+            if parsedGuildData and parsedGuildData.guild then
+                DiscordCommunityTitle.Text = parsedGuildData.guild.name or DiscordCommunityTitle.Text
+                
+                if parsedGuildData.guild.id and parsedGuildData.guild.icon then
+                    local discordCdnIconUrl = string.format("https://cdn.discordapp.com/icons/%s/%s.png?size=128", parsedGuildData.guild.id, parsedGuildData.guild.icon)
+                    ApplyImage(DiscordAvatarIcon, discordCdnIconUrl, SafeFallbackIcon)
+                end
+                
+                local onlineCount = parsedGuildData.approximate_presence_count or 0
+                local totalCount = parsedGuildData.approximate_member_count or 0
+                local offlineCount = math.max(0, totalCount - onlineCount)
+                
+                OnlineMembersLabel.Text = "● " .. FormatNumber(onlineCount) .. " Online"
+                OfflineMembersLabel.Text = "● " .. FormatNumber(offlineCount) .. " Offline"
+                TotalMembersLabel.Text = "Total Members: " .. FormatNumber(totalCount)
+            end
+        end)
+    end
+end)
+
+-- Independent Thread: Seamless Transition from Splash to Main Interface
+task.delay(1.9, function()
+    pcall(function()
+        TweenService:Create(SplashContainer, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(0, 380, 0, 200),
+            Position = UDim2.new(0.5, -190, 0.5, -100)
+        }):Play()
+        task.wait(0.35)
+        if SplashContainer then SplashContainer:Destroy() end
+
+        if MainDashboardFrame then
+            MainDashboardFrame.Visible = true
+            TweenService:Create(MainDashboardFrame, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+                Size = UDim2.new(0, 580, 0, 340),
+                Position = UDim2.new(0.5, -290, 0.5, -170)
+            }):Play()
+        end
+    end)
+end)
+
+-- ===================================================================== --
+-- EVENT HANDLERS & CORE LOGIC                                           --
+-- ===================================================================== --
+
+GetKeyUrlButton.MouseButton1Click:Connect(function()
+    pcall(function()
+        if setclipboard then
+            setclipboard(Config.KeyLink or "")
+            InputKeyTextBox.Text = "Key link copied to clipboard!"
+            task.wait(1.5)
+            InputKeyTextBox.Text = ""
+        end
+    end)
+end)
+
+SubmitKeyButton.MouseButton1Click:Connect(function()
+    local userEnteredKey = InputKeyTextBox.Text
+    SubmitKeyButton.Text = "Verifying..."
+    
+    task.spawn(function()
+        task.wait()
+        local isKeyValid = false
+        
+        if (not Config.RequiredKey or Config.RequiredKey == "") or userEnteredKey == Config.RequiredKey then
+            isKeyValid = true
+        elseif Config.Jnkie and Config.Jnkie.Enabled then
+            isKeyValid = VerifyJnkieKeyService(userEnteredKey)
+        end
+        
+        if isKeyValid then
+            SubmitKeyButton.Text = "Loading Script..."
+            local targetScriptUrl = Config.Scripts and Config.Scripts[game.PlaceId]
+            if targetScriptUrl then
+                UnloadInterface()
+                pcall(function()
+                    loadstring(game:HttpGet(targetScriptUrl))()
+                end)
+            else
+                InputKeyTextBox.Text = "Game script missing!"
+                SubmitKeyButton.Text = "Submit Key"
+                task.wait(2)
+                InputKeyTextBox.Text = ""
+            end
+        else
+            InputKeyTextBox.Text = "Invalid License Key!"
+            SubmitKeyButton.Text = "Submit Key"
+            task.wait(1.5)
+            InputKeyTextBox.Text = ""
+        end
+    end)
+end)
